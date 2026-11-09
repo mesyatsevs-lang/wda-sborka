@@ -14,21 +14,43 @@ jobs:
           repository: appium/WebDriverAgent
           ref: master
           path: wda
-      - name: Show source commit
-        run: cd wda && git log -1 --format="%H %ci"
-      - name: Build (unsigned)
+      - name: Inspect source
+        run: |
+          echo "=== top of wda ==="
+          ls -la wda | head -40
+          echo "=== projects ==="
+          find wda -maxdepth 2 \( -name "*.xcodeproj" -o -name "*.xcworkspace" \) | head
+          echo "=== schemes ==="
+          cd wda && (xcodebuild -list 2>&1 | head -60 || true)
+      - name: Build
         run: |
           cd wda
-          xcodebuild build-for-testing -project WebDriverAgent.xcodeproj -scheme WebDriverAgentRunner -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO -derivedDataPath build | tail -20
-      - name: Package unsigned ipa
+          set -o pipefail
+          xcodebuild build-for-testing -project WebDriverAgent.xcodeproj -scheme WebDriverAgentRunner -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO -derivedDataPath build 2>&1 | tee ../build.log | tail -30
+      - name: Find app and package
+        if: always()
         run: |
-          mkdir -p Payload
-          cp -r "wda/build/Build/Products/Debug-iphoneos/WebDriverAgentRunner-Runner.app" Payload/
-          zip -qry WebDriverAgent-unsigned.ipa Payload
-          ls -la WebDriverAgent-unsigned.ipa
-      - name: Release
+          echo "=== search *.app ==="
+          find wda/build -name "*.app" 2>/dev/null | tee apps.txt || true
+          APP=$(find wda/build -name "WebDriverAgentRunner-Runner.app" 2>/dev/null | head -1)
+          echo "APP=$APP"
+          if [ -n "$APP" ]; then
+            mkdir -p Payload
+            cp -r "$APP" Payload/
+            zip -qry WebDriverAgent-unsigned.ipa Payload
+            ls -la WebDriverAgent-unsigned.ipa
+          else
+            echo "no WebDriverAgentRunner-Runner.app built" > NO-APP.txt
+          fi
+      - name: Release with logs
+        if: always()
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: wda-1
-          name: WebDriverAgent unsigned
-          files: WebDriverAgent-unsigned.ipa
+          tag_name: wda-2
+          name: WDA build 2
+          fail_on_unmatched_files: false
+          files: |
+            WebDriverAgent-unsigned.ipa
+            build.log
+            apps.txt
+            NO-APP.txt
